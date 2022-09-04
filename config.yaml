@@ -1,0 +1,19 @@
+## Config file
+
+#required arguments
+type: "paired" # single or paired
+
+annotation_file: "mm10_repeatmasker.txt"
+
+genome_fasta: "/path/to/genome.fa"
+
+index_folder: "repmask_genome"
+
+## Reduce number of threads if desired.
+## Used for generating repeat genome index and performing HISAT2 alignment
+threads: 16 
+
+## Maximum number of reported alignments to repeatmasker genome
+## Increasing max_k may also increase time required to process read counts.
+max_k: 1
+
