@@ -372,7 +372,7 @@ rule fastq_to_bam_HISAT:
         shell("samtools view -O BAM -F 4 output/bam/{wildcards.sample}_R1_sorted.bam > output/bam/{wildcards.sample}_R1_mapped.bam")
         shell("samtools index output/bam/{wildcards.sample}_R1_mapped.bam")
         ## Clean up unneeded files
-        shell("rm output/bam/{wildcards.sample}_R1.bam output/bam/{wildcards.sample}_R1.sam")
+        shell("rm output/bam/{wildcards.sample}_R1.sam output/bam/{wildcards.sample}_R1.bam")
         if config["type"] == "single":
             shell("touch {output.r2}")        
         if config["type"] == "paired":
@@ -384,12 +384,11 @@ rule fastq_to_bam_HISAT:
             shell("samtools view -b output/bam/{wildcards.sample}_R2.sam > output/bam/{wildcards.sample}_R2.bam")
             shell("samtools sort -@ 8 -O BAM -o output/bam/{wildcards.sample}_R2_sorted.bam output/bam/{wildcards.sample}_R2.bam")
             shell("samtools index output/bam/{wildcards.sample}_R2_sorted.bam")
-            shell("rm output/bam/{wildcards.sample}_R2.bam")
             ## Subset the sam files to mapped reads only
             shell("samtools view -O BAM -F 4 output/bam/{wildcards.sample}_R2_sorted.bam > output/bam/{wildcards.sample}_R2_mapped.bam")
             shell("samtools index output/bam/{wildcards.sample}_R2_mapped.bam")
             ## Remove original sam files
-            shell("rm output/bam/{wildcards.sample}_R2.bam output/bam/{wildcards.sample}_R2.sam")
+            shell("rm output/bam/{wildcards.sample}_R2.sam output/bam/{wildcards.sample}_R2.bam")
 
 rule count_reads:
     input:
@@ -403,11 +402,11 @@ rule count_reads:
     log:
         "output/logs/{sample}_htseq.log"
     run:
-        shell("htseq-count -f bam -m union --nonunique fraction -t gene -s no \
-            -c {output.r1} {input.r1} {params.gtf}")
+        shell("featureCounts -M -O --fraction  -t gene -a {params.gtf} \
+            -o {output.r1} {input.r1} 2> output/logs/{wildcards.sample}_R1.feature_counts.log")
         if config["type"] == "paired":
-            shell("htseq-count -f bam -m union --nonunique fraction -t gene -s no \
-                -c {output.r2} {input.r2} {params.gtf}")
+            shell("featureCounts -M -O --fraction  -t gene -a {params.gtf} \
+            -o {output.r2} {input.r2} 2> output/logs/{wildcards.sample}_R2.feature_counts.log")
         else:
             shell("touch {output.r2}")
 
@@ -433,13 +432,16 @@ rule counts_matrix:
                 sample = sample.split("\\")[2]
             dict_of_counts[sample] = {}
             with open(file, "r") as infile:
+                next(infile)
+                next(infile)
                 for lines in infile:
                     lines = lines.strip().split("\t")
                     if not lines[0].startswith("__"):
-                        dict_of_counts[sample][lines[0]] = int(float(lines[-1]))
-
+                        dict_of_counts[sample][lines[0]] = float(lines[-1])
+        ## Transform R1 counts into a dataframe
         r1_df = pd.DataFrame(dict_of_counts)
-        if params.type=="paired": 
+        print(r1_df)
+        if config["type"] == "paired": 
             dict_of_counts = {}
             for file in R2_list:
                 sample = file.replace("_R2_htseq.tsv","")
@@ -449,11 +451,14 @@ rule counts_matrix:
                     sample = sample.split("\\")[2]
                 dict_of_counts[sample] = {}
                 with open(file, "r") as infile:
+                    next(infile)
+                    next(infile)
                     for lines in infile:
                         lines = lines.strip().split("\t")
                         if not lines[0].startswith("__"):
-                            dict_of_counts[sample][lines[0]] = int(float(lines[-1]))
+                            dict_of_counts[sample][lines[0]] = float(lines[-1])
             r2_df = pd.DataFrame(dict_of_counts)
+            print(r2_df)
             tot_df=r1_df+r2_df
             tot_df.to_csv(output[0], sep='\t')
         else:
@@ -462,7 +467,7 @@ rule counts_matrix:
 rule normalize_counts:
     input:
         anno=config["annotation_file"],
-        bamfiles=expand("output/bam/{sample}_R1_sorted.bam", sample=SAMPLES),
+        bamfiles=expand("output/logs/{sample}.alignment.log", sample=SAMPLES),
         total_matrix="output/counts_matrix.txt"
     output:
         family_file="output/Repeat_expression_repfamily_norm.txt",
@@ -470,7 +475,6 @@ rule normalize_counts:
         repname_file="output/Repeat_expression_repname_norm.txt"
     run:
         import pandas as pd
-        import subprocess
         ## Import the unmodified repeatmasker file
         orig=pd.read_csv(input.anno,sep='\t')
         orig=orig[['genoName','genoStart','genoEnd','repName','swScore','strand','repClass','repFamily']]
@@ -485,21 +489,17 @@ rule normalize_counts:
         repname_raw=ct_anno.groupby("repName")[sample_list].sum()
         repclass_raw=ct_anno.groupby("repClass")[sample_list].sum()
         ## Read in the R1 samfile to get the total 
-        bamfiles=["output/bam/"+x+"_R1_sorted.bam" for x in sample_list]
         bamsize=dict()
         for i in sample_list:
-            mybam="output/bam/"+i+"_R1_sorted.bam"
-            print(mybam)
-            cursize=subprocess.Popen(["samtools","view","-c",mybam], stdout=subprocess.PIPE)
-            output=cursize.communicate()[0]
-            bamsize[i]=int(output)
-            # bamsize.append(int(output))
+            mybam=pd.read_csv("output/logs/"+i+".alignment.log",header=None)
+            curstr=mybam[mybam.iloc[:,0].str.contains('reads; of these:')].iloc[0,0]
+            outstr=int(curstr.replace(" reads; of these:",""))
+            bamsize[i]=outstr
         ## With bamfile size, normalize the read counts as a proportion
         repclass_norm=repclass_raw
         repname_norm=repname_raw
         repfamily_norm=repfamily_raw
         for i in sample_list:
-            # i='4864-NeuN-neg'
             repclass_norm.loc[:,i]=repclass_raw[i]/bamsize[i]
             repname_norm.loc[:,i]=repname_raw[i]/bamsize[i]
             repfamily_norm.loc[:,i]=repfamily_raw[i]/bamsize[i]

@@ -15,7 +15,6 @@ threads: 16
 
 ## Maximum number of reported alignments to repeatmasker genome
 ## Increasing max_k may also increase time required to process read counts.
-## NOTE: k>1 has not yet been tested to determine if the read counts are properly
-## fractionated between the repeat locations. Recommend keeping k=1 until future commits.
+## NOTE: k>1 will result in read counts being fractionated between the repeats to which the read was aligned.
 max_k: 1
 
